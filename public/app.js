@@ -2,6 +2,8 @@
   "use strict";
 
   const REFRESH_MS = 15_000;
+  const liveProviders = {};
+  const announcedSignalIds = new Set();
   const DEFAULT_ASSETS = [
     { symbol: "XAU/USD", label: "Gold", category: "Metals" },
     { symbol: "XAG/USD", label: "Silver", category: "Metals" },
@@ -45,6 +47,8 @@
   let selectedSignalId;
   let signalPriceLines = [];
   let websocketRetryDelay = 1000;
+  let audioContext;
+  let lastEvaluatedCandleKey;
   const previousPrices = {};
 
   function loadWatchlist() {
@@ -86,10 +90,57 @@
 
   function showNotice(message) {
     const notice = byId("notice");
+    notice.classList.remove("signal-notice");
     notice.textContent = message;
     notice.hidden = false;
     clearTimeout(noticeTimeout);
     noticeTimeout = setTimeout(() => { notice.hidden = true; }, 9000);
+  }
+
+  function showSignalToast(signal) {
+    const notice = byId("notice");
+    notice.classList.add("signal-notice");
+    notice.textContent = `${signal.action === "BUY" ? "BUY" : "SELL"} signal · ${signal.asset} · ${signal.confidence}% confluence`;
+    notice.hidden = false;
+    clearTimeout(noticeTimeout);
+    noticeTimeout = setTimeout(() => {
+      notice.hidden = true;
+      notice.classList.remove("signal-notice");
+    }, 6500);
+  }
+
+  function playSignalPing() {
+    if (!audioContext || audioContext.state !== "running") return;
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    const now = audioContext.currentTime;
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(880, now);
+    oscillator.frequency.exponentialRampToValueAtTime(660, now + 0.12);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.08, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
+    oscillator.connect(gain);
+    gain.connect(audioContext.destination);
+    oscillator.start(now);
+    oscillator.stop(now + 0.21);
+  }
+
+  function announceSignal(signal) {
+    const confidence = Number(signal?.confidence);
+    if (!signal || !["BUY", "SELL"].includes(signal.action) ||
+      !Number.isFinite(confidence) || confidence < 75 || !signal.id ||
+      announcedSignalIds.has(signal.id)) return;
+    announcedSignalIds.add(signal.id);
+    if (
+      signal.asset === selectedAsset &&
+      signal.timeframe === selectedTimeframe &&
+      candleSeries
+    ) {
+      drawSignalOverlay(signal);
+    }
+    showSignalToast(signal);
+    playSignalPing();
   }
 
   function setConnection(connected, label) {
@@ -134,6 +185,8 @@
     marketPollingEnabled = true;
     clearSignalLines();
     renderAssetTabs();
+    const streamConnected = selectedMarketStreamConnected();
+    setConnection(streamConnected, streamConnected ? "LIVE STREAM" : "STREAM CONNECTING");
     byId("chart-asset-name").textContent = assetLabel(symbol);
     byId("chart-asset-code").textContent = symbol;
     byId("signal-symbol").textContent = symbol;
@@ -512,6 +565,15 @@
     return movement * direction / pip;
   }
 
+  function filteredSignals(signals) {
+    if (historyFilter === "active") return signals.filter(selectedSignal);
+    if (historyFilter === "wins") return signals.filter((signal) =>
+      signal.outcome === "TP2 Hit" || signal.outcome?.startsWith("TP1 Hit")
+    );
+    if (historyFilter === "losses") return signals.filter((signal) => signal.outcome === "SL Hit");
+    return signals;
+  }
+
   function renderHistory(signals) {
     lastSignals = signals;
     const body = byId("history-body");
@@ -540,6 +602,7 @@
         : "No signals generated yet. The engine is monitoring for confluence.";
       row.append(cell);
       body.append(row);
+      renderSignalStream(signals);
       return;
     }
 
@@ -575,14 +638,6 @@
         row.append(cell);
       }
 
-      function filteredSignals(signals) {
-        if (historyFilter === "active") return signals.filter(selectedSignal);
-        if (historyFilter === "wins") return signals.filter((signal) =>
-          signal.outcome === "TP2 Hit" || signal.outcome?.startsWith("TP1 Hit")
-        );
-        if (historyFilter === "losses") return signals.filter((signal) => signal.outcome === "SL Hit");
-        return signals;
-      }
       row.classList.add("table-row-clickable");
       row.title = "Select this signal to load its chart levels.";
       row.addEventListener("click", () => openSignal(signal));
@@ -728,7 +783,8 @@
       }
       await loadHistory();
       byId("notice").hidden = true;
-      setConnection(true, "LIVE DATA");
+      const streamConnected = selectedMarketStreamConnected();
+      setConnection(streamConnected, streamConnected ? "LIVE STREAM" : "LIVE DATA");
     } catch (error) {
       if (requestedAsset === selectedAsset && requestedTimeframe === selectedTimeframe) {
         byId("chart-update").textContent = "UPDATE FAILED";
@@ -824,6 +880,7 @@
 
     if (update.asset !== selectedAsset || update.timeframe !== selectedTimeframe) return;
     byId("main-price").textContent = formatPrice(candle.close, update.asset);
+    if (candle.closed) evaluateLiveSignals(update);
     if (!candleSeries || !liveCandles.length) return;
     const updateCandle = {
       time: candle.time,
@@ -841,6 +898,22 @@
     ema50Series?.setData(calculateEmaSeries(liveCandles, 50));
   }
 
+  function evaluateLiveSignals(update) {
+    if (!update.candle.closed || !marketPollingEnabled) return;
+    const candleKey = `${update.asset}:${update.timeframe}:${update.candle.time}`;
+    if (candleKey === lastEvaluatedCandleKey) return;
+    lastEvaluatedCandleKey = candleKey;
+    loadMarket();
+  }
+
+  function selectedMarketProvider() {
+    return selectedAsset.endsWith("/USDT") ? "binance" : "twelvedata";
+  }
+
+  function selectedMarketStreamConnected() {
+    return liveProviders[selectedMarketProvider()] === "connected";
+  }
+
   function connectLiveSocket() {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     liveSocket = new WebSocket(`${protocol}//${window.location.host}/ws`);
@@ -851,12 +924,19 @@
     liveSocket.addEventListener("message", (event) => {
       try {
         const message = JSON.parse(event.data);
-        if (message.type === "market") handleLiveMarket(message);
-        if (message.type === "provider" && message.provider === "binance") {
-          const label = message.status === "connected" ? "LIVE STREAM" : "STREAM RECONNECTING";
-          setConnection(message.status === "connected", label);
+        if (message.type === "market" || message.type === "CANDLE_UPDATE") handleLiveMarket(message);
+        if (message.type === "provider" && ["binance", "twelvedata"].includes(message.provider)) {
+          liveProviders[message.provider] = message.status;
+          if (message.provider === selectedMarketProvider()) {
+            const connected = message.status === "connected";
+            setConnection(connected, connected ? "LIVE STREAM" : "STREAM RECONNECTING");
+          }
         }
-        if (message.type === "signal" || message.type === "signals-updated") {
+        if (message.type === "signal") {
+          announceSignal(message.signal);
+          loadHistory().catch((error) => showNotice(error.message));
+        }
+        if (message.type === "signals-updated") {
           loadHistory().catch((error) => showNotice(error.message));
         }
       } catch (error) {
@@ -913,6 +993,18 @@
     });
   }
   byId("asset-search-form").addEventListener("submit", searchAssets);
+  document.addEventListener("pointerdown", () => {
+    const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+    if (audioContext || !AudioContextConstructor) return;
+    try {
+      audioContext = new AudioContextConstructor();
+      audioContext.resume().catch((error) => {
+        console.warn("Signal audio remains unavailable:", error.message);
+      });
+    } catch (error) {
+      console.warn("Signal audio could not be initialized:", error.message);
+    }
+  }, { once: true });
 
   renderAssetTabs();
   initializeChart();
@@ -922,6 +1014,6 @@
   loadMarket();
   loadHistory().catch((error) => showNotice(error.message));
   setInterval(() => {
-    if (marketPollingEnabled) loadMarket();
+    if (marketPollingEnabled && !selectedMarketStreamConnected()) loadMarket();
   }, REFRESH_MS);
 })();

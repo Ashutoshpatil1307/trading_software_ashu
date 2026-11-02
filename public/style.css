@@ -274,6 +274,7 @@ tbody tr:hover { background: rgba(0, 229, 255, .035); }
 .risk-text.risk-medium, .risk-text.risk-high { color: var(--amber); }
 .table-empty { padding: 25px; color: var(--muted); text-align: center; font: 10px var(--sans); }
 .notice { position: fixed; z-index: 9; right: 22px; bottom: 22px; max-width: 430px; padding: 13px 16px; border: 1px solid rgba(255, 51, 102, .4); border-radius: 8px; background: #180c13; color: #ff9aaf; font-size: 11px; line-height: 1.5; box-shadow: 0 10px 35px #000b, var(--glow-red); }
+.notice.signal-notice { border-color: rgba(0, 255, 136, .45); background: #07180f; color: var(--green); box-shadow: 0 10px 35px #000b, var(--glow-green); }
 .footer { display: flex; justify-content: space-between; gap: 12px; padding: 21px 0 23px; color: var(--muted); font: 7px var(--mono); letter-spacing: .55px; }
 .footer-separator { color: var(--cyan); }
 

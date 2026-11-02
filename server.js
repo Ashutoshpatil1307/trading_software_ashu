@@ -26,7 +26,7 @@ const PUBLIC_DIR = path.join(__dirname, "public");
 const API_KEY = process.env.TWELVEDATA_API_KEY;
 let signalQueue = Promise.resolve();
 let trackerRunning = false;
-const streams = createStreamHub(server, { onMarket: handleStreamCandle });
+const streams = createStreamHub(server, { onMarket: handleStreamCandle, apiKey: API_KEY });
 
 app.use(express.json({ limit: "16kb" }));
 app.use(express.static(PUBLIC_DIR));
@@ -132,17 +132,23 @@ async function handleStreamCandle(update) {
   }
 }
 
-app.get("/api/health", (_request, response) => {
+function healthResponse(_request, response) {
+  response.set("Cache-Control", "no-store");
   response.json({
     status: "ok",
+    timestamp: new Date().toISOString(),
     dataProviders: {
       twelveData: Boolean(API_KEY),
       binance: "public",
+      streams: streams.getStatus(),
       news: process.env.NEWS_RSS_URL || "ForexLive RSS",
       economicCalendar: process.env.ECONOMIC_CALENDAR_URL || "Forex Factory calendar feed",
     },
   });
-});
+}
+
+app.get("/health", healthResponse);
+app.get("/api/health", healthResponse);
 
 app.get("/api/assets", (_request, response) => {
   response.json({ assets: publicAssets() });
@@ -203,7 +209,7 @@ app.get("/api/market", async (request, response) => {
     });
 
     streams.broadcast({
-      type: "market",
+      type: "CANDLE_UPDATE",
       asset: symbol,
       timeframe,
       candle: { ...candles.at(-1), closed: false },
