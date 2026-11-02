@@ -1,0 +1,23 @@
+{
+  "name": "forex-market-management",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A multi-asset market analysis and signal dashboard.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "rss-parser": "^3.13.0",
+    "technicalindicators": "^3.1.0",
+    "ws": "^8.22.1",
+    "ws": "^8.22.1"
+  }
+}

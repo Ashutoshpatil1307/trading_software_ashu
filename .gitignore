@@ -1,0 +1,5 @@
+node_modules/
+.env
+data/signals.json
+data/signals.json.tmp
+npm-debug.log*
